@@ -49,6 +49,8 @@ class Viewer(object):
             for l, c in zip(finder.find(location), channel):
                 image[l.y:l.y + l.h, l.x:l.x + l.w, :] *= 0.75
                 image[l.y:l.y + l.h, l.x:l.x + l.w, c] = 255
+                (ox, oy) = l.main_point
+                image[oy,ox,:] = 255 - image[oy,ox,:]
             imshow(image, interpolation='none')
 
     def _get_colour(self, numpy_array):
