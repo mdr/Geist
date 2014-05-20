@@ -7,6 +7,8 @@ import logging
 from scipy.ndimage.measurements import label
 from scipy.ndimage import binary_erosion, binary_dilation
 
+from collections import namedtuple
+
 logger = logging.getLogger(__name__)
 
 fast_sum = numpy.add.reduce
@@ -313,17 +315,39 @@ def best_n_distance_factory(n):
         )
     return best_n_distance
 
+def split_lines(img):
+  for y1, y2 in empty_span_line_segmentation(img):
+    yield bounding_box(img[y1:y2,:])
+
+def bounding_box(img):
+  locs = numpy.argwhere(img > 0)
+  (y0, x0) = locs.min(axis = 0)
+  (y1, x1) = locs.max(axis = 0)
+  return img[y0:y1 + 1,x0:x1+1]
+
+def preprocess_for_ocr(img):
+  return invert(threshold(remove_subpixel_aa(img)))
+
+def threshold(img, thresh=127):
+  return ((img > thresh) * 255).astype(numpy.uint8)
+
+def invert(img):
+  return 255 - img
+
+class CharInSitu(namedtuple('CharInSitu', 'img x1 x2')):
+  pass
 
 class Classifier(object):
-    def __init__(self, cutoff=0.03):
+    def __init__(self, cutoff=0.03, detect_space_threshold=7):
         self._data = []
         self.cut_off = cutoff
         self.distance_func = best_n_distance_factory(6)
         self.extract_func = split_characters
         self.properties_func = extract_properties
+        self.detect_space_threshold = detect_space_threshold
 
-    def train(self, image, text, max_w_h_ratio=0.85):
-        char_images = list(self.extract_func(image, max_w_h_ratio))
+    def train(self, image, text):
+        char_images = [c.img for c in self.extract_func(image)]
         assert len(char_images) == len(text), (
             "%d == %d" % (len(char_images), len(text))
         )
@@ -337,18 +361,21 @@ class Classifier(object):
         self._adjuster = create_scaller_adjuster([d for c, d in self._data])
         self._adjusted_data = [(c, self._adjuster(d)) for c, d in self._data]
 
-    def _classify(self, image, max_w_h_ratio=0.85):
-        for im in list(self.extract_func(image, max_w_h_ratio)):
-            d2 = self._adjuster(self.properties_func(im))
+    def _classify(self, image):
+        for char_in_situ in list(self.extract_func(image)):
+            d2 = self._adjuster(self.properties_func(char_in_situ.img))
             result = []
             for t, d1 in self._adjusted_data:
                 dist = self.distance_func(d1, d2)
                 result.append((dist, t))
-            yield sorted(result)
+            yield char_in_situ, sorted(result)
 
-    def classify(self, image, unrecognised='ignore', max_w_h_ratio=0.85):
+    def classify(self, image, unrecognised='ignore'):
         text = []
-        for dists in self._classify(image, max_w_h_ratio):
+        previous_x_end = 0
+        for char_in_situ, dists in self._classify(image):
+            if char_in_situ.x1 - previous_x_end > self.detect_space_threshold:
+              text.append(' ')
             d, t = dists[0]
             if d > self.cut_off:
                 if unrecognised == 'ignore':
@@ -357,7 +384,14 @@ class Classifier(object):
                     raise UnclassifiedCharacterError('nearest %r %r' % (d, t))
             else:
                 text.append(t)
+            previous_x_end = char_in_situ.x2
         return ''.join(text)
+
+    def classify_para(self, img):
+        text_lines = []
+        for l in split_lines(img):
+            text_lines.append(self.classify(l))
+        return "\n".join(text_lines)
 
     def to_json(self):
         return json.dumps(
@@ -388,13 +422,13 @@ class Classifier(object):
             table.append(row)
         return key, table
 
-    def diagnose(self, image, expected_text, max_w_h_ratio=0.85):
+    def diagnose(self, image, expected_text):
         def print_data(d):
             print(''.join('% 9s' % ('%.5f' % (i,),) for i in d))
         print('ypos', 'weight', *[
              i + j for i in ['00', '30', '60', '90'] for j in ['skew', 'kurt']
         ])
-        for c, im in zip(expected_text, self.extract_func(image, max_w_h_ratio)):
+        for c, im in zip(expected_text, self.extract_func(image)):
             ep2 = self.properties_func(im)
             d2 = self._adjuster(ep2)
             print(c)
