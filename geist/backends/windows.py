@@ -169,12 +169,15 @@ class GeistWindowsBackend(object):
 
 
 class _KeyBoard(object):
-    KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_KEYDOWN = 0x0000
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
     VK_SHIFT = 0x10
     VK_CONTROL = 0x11
     VK_MENU = 0x12
     VK_RETURN = 0x0D
+    VK_HOME = 0x24
+    VK_END = 0x23
 
     CHAR_TO_NAME_MAP = {
         'return': '\r',
@@ -186,7 +189,6 @@ class _KeyBoard(object):
         'backslash': '\\',
         'underscore': '_',
         'exclam': '!'
-
     }
 
     def _convert_keyname_to_virtual_key(self, name):
@@ -196,6 +198,10 @@ class _KeyBoard(object):
             return _KeyBoard.VK_MENU
         elif name == 'control':
             return _KeyBoard.VK_CONTROL
+        elif name == 'home':
+            return _KeyBoard.VK_HOME
+        elif name == 'end':
+            return _KeyBoard.VK_END
         elif name in _KeyBoard.CHAR_TO_NAME_MAP:
             return _USER32.VkKeyScanW(
                 WCHAR(_KeyBoard.CHAR_TO_NAME_MAP[name])
@@ -206,15 +212,23 @@ class _KeyBoard(object):
     def _map_virtual_key(self, key):
         return _USER32.MapVirtualKeyA(key & 0xff, 0)
 
+    def _extra_flags(self, name):
+        if name == 'home' or name == 'end':
+            return _KeyBoard.KEYEVENTF_EXTENDEDKEY
+        else:
+            return 0
+
     def key_down(self, name):
         vkey = self._convert_keyname_to_virtual_key(name)
         scan = self._map_virtual_key(vkey)
-        _USER32.keybd_event(vkey, scan, _KeyBoard.KEYEVENTF_KEYDOWN, None)
+        extra_flags = self._extra_flags(name)
+        _USER32.keybd_event(vkey, scan, _KeyBoard.KEYEVENTF_KEYDOWN | extra_flags, None)
 
     def key_up(self, name):
         vkey = self._convert_keyname_to_virtual_key(name)
         scan = self._map_virtual_key(vkey)
-        _USER32.keybd_event(vkey, scan | 0x80, _KeyBoard.KEYEVENTF_KEYUP, None)
+        extra_flags = self._extra_flags(name)
+        _USER32.keybd_event(vkey, scan | 0x80, _KeyBoard.KEYEVENTF_KEYUP | extra_flags, None)
 
 
 class _Mouse(object):
